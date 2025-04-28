@@ -1,0 +1,227 @@
+let { Tapable, SyncHook } = require("tapable");
+const path = require("path");
+let async = require("neo-async");
+
+const NormalModuleFactory = require("./NormalModuleFactory");
+const normalModuleFactory = new NormalModuleFactory();
+const Parser = require("./Parser");
+const parser = new Parser();
+
+const Chunk = require("./Chunk");
+
+class Compilation extends Tapable {
+  constructor(compiler) {
+    super();
+    this.compiler = compiler;
+    this.options = compiler.options; // 选项一样
+    this.context = compiler.context; // 根目录
+    this.inputFileSystem = compiler.inputFileSystem; // 读取文件模块fs
+    this.outputFileSystem = compiler.outputFileSystem; // 写入文件的模块fs
+
+    // 入口模块的数组,这里放着所有的入口模块
+    this.entries = [];
+    // 模块的数组,这里放着所有的模块
+    this.modules = [];
+    // key是模块ID, 值是模块对象
+    this._modules = {};
+    //这里放着所有代码块
+    this.chunks = [];
+
+    // 模块的依赖图
+    // this.moduleGraph = new ModuleGraph(this);
+
+    this.hooks = {
+      //当你成功构建完成一个模块后，就会触发此钩子执行
+      succeedModule: new SyncHook(["module"]),
+      seal: new SyncHook(),
+      beforeChunks: new SyncHook(),
+      afterChunks: new SyncHook(),
+    };
+  }
+
+  /**
+   * 开始编译一个新的入口
+   * @param {*} context  根目录
+   * @param {*} entry 入口模块的相对路径 ./src/index.js
+   * @param {*} name 入口的名字 main
+   * @param {*} callback 所有模块都被编译完成 的回调
+   */
+  addEntry(context, entry, name, finalCallback) {
+    this._addModuleChain(context, entry, name, (err, module) => {
+      // console.log('addEntry完成');
+      finalCallback(err, module);
+    });
+  }
+
+  _addModuleChain(context, rawRequest, name, callback) {
+    this.createModule(
+      {
+        name,
+        context,
+        rawRequest,
+        parser,
+        resource: path.posix.join(context, rawRequest),
+        moduleId:
+          "./" +
+          path.posix.relative(context, path.posix.join(context, rawRequest)),
+        // async,
+      },
+      (entryModule) => this.entries.push(entryModule),
+      callback
+    );
+  }
+
+  /**
+   * 创建并编译一个模块
+   * @param {*} data 要编译的模块信息
+   * @param {*} addEntry  可选的增加入口的方法：如果这个模块是入口模块,如果不是的话,就什么不做
+   * @param {*} callback 编译完成后可以调用callback回调
+   */
+  createModule(data, addEntry, callback) {
+    //通过模块工厂创建一个模块
+    let module = normalModuleFactory.create(data);
+    //如果是入口模块,则添加入口里去
+    addEntry && addEntry(module);
+
+    //给普通模块数组添加一个模块
+    this.modules.push(module);
+    this._modules[module.moduleId] = module;
+
+    // 递归 编译依赖的模块
+    const afterBuild = (err, module) => {
+      //如果大于0,说明有依赖
+      if (module.dependencies.length > 0) {
+        this.processModuleDependencies(module, (err) => {
+          callback(err, module);
+        });
+      } else {
+        callback(err, module);
+      }
+    };
+
+    // 编译模块
+    this.buildModule(module, afterBuild);
+  }
+
+  /**
+   * 处理/编译 模块依赖
+   * @param {*} module ./src/index.js
+   * @param {*} callback
+   */
+  processModuleDependencies(module, callback) {
+    //1.获取当前模块的依赖模块
+    let dependencies = module.dependencies;
+    //遍历依赖模块,全部开始编译, 当所有的依赖模块全部编译完成后 才调用callback
+    // 异步任务同时开始，全部执行完成，才会执行callback
+    async.forEach(
+      dependencies,
+      // 每个任务的 具体执行逻辑： 对每个依赖模块 进行编译
+      (dependency, done) => {
+        let { name, context, rawRequest, resource, moduleId } = dependency;
+        this.createModule(
+          {
+            name,
+            context,
+            rawRequest,
+            parser,
+            resource,
+            moduleId,
+          },
+          null,
+          done
+        );
+      },
+      // 全部任务完成后的 回调
+      callback
+    );
+  }
+
+  /**
+   * 编译模块
+   * @param {*} module 要编译的模块
+   * @param {*} afterBuild 编译完成后的后的回调
+   */
+  buildModule(module, afterBuild) {
+    // 模块的真正的编译逻辑，其实是 放在module内部完成
+    module.build(this, (err) => {
+      //走到这里意味着，一个module模块 已经编译完成了
+      this.hooks.succeedModule.call(module);
+      afterBuild(err, module);
+    });
+  }
+
+  /**
+   * 把模块封装成代码块Chunk
+   * @param {*} callback
+   */
+  seal(callback) {
+    this.hooks.seal.call();
+    // 开始准备生成代码块
+    this.hooks.beforeChunks.call();
+
+    // 一般来说,默认情况下,每一个入口会生成一个代码块
+    for (const entryModule of this.entries) {
+      //根据入口模块, 得到一个代码块
+      const chunk = new Chunk(entryModule);
+      this.chunks.push(chunk);
+      //对所有模块进行过滤,找出来那些名称跟这个chunk一样的模块,组成一个数组 赋给chunk.modules
+      chunk.modules = this.modules.filter(
+        (module) => module.name === chunk.name
+      );
+    }
+
+    // console.log(this.chunks);
+
+    this.hooks.afterChunks.call(this.chunks);
+    callback();
+
+
+    //循环所有的modules数组
+    // for (const module of this.modules) {
+    //   //如果模块ID中有node_modules内容,说明是一个第三方模块
+    //   if (/node_modules/.test(module.moduleId)) {
+    //     module.name = "vendors";
+    //     if (!this.vendors.find((item) => item.moduleId === module.moduleId))
+    //       this.vendors.push(module);
+    //   } else {
+    //     let count = this.moduleCount[module.moduleId];
+    //     if (count) {
+    //       this.moduleCount[module.moduleId].count++;
+    //     } else {
+    //       //如果没有,则给它赋初始值 {module,count} count是模块的引用次数
+    //       this.moduleCount[module.moduleId] = { module, count: 1 };
+    //     }
+    //   }
+    // }
+    // for (let moduleId in this.moduleCount) {
+    //   const { module, count } = this.moduleCount[moduleId];
+    //   if (count >= 2) {
+    //     module.name = "commons";
+    //     this.commons.push(module);
+    //   }
+    // }
+    // let deferredModuleIds = [...this.vendors, ...this.commons].map(
+    //   (module) => module.moduleId
+    // );
+    // this.modules = this.modules.filter(
+    //   (module) => !deferredModuleIds.includes(module.moduleId)
+    // );
+
+    // if (this.vendors.length > 0) {
+    //   const chunk = new Chunk(this.vendors[0]); //根据入口模块得到一个代码块
+    //   chunk.async = true;
+    //   this.chunks.push(chunk);
+    //   //对所有模块进行过滤,找出来那些名称跟这个chunk一样的模块,组成一个数组赋给chunk.modules
+    //   chunk.modules = this.vendors;
+    // }
+    // if (this.commons.length > 0) {
+    //   const chunk = new Chunk(this.commons[0]); //根据入口模块得到一个代码块
+    //   chunk.async = true;
+    //   this.chunks.push(chunk);
+    //   //对所有模块进行过滤,找出来那些名称跟这个chunk一样的模块,组成一个数组赋给chunk.modules
+    //   chunk.modules = this.commons;
+    // }
+  }
+}
+
+module.exports = Compilation;
