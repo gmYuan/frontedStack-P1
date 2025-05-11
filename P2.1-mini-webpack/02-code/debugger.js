@@ -11,6 +11,8 @@ compiler.run((err = null, stats) => {
     entries: true,
     modules: true,
     chunks: true,
+    files: true,
+    assets: true,
     
     // _modules:true,
     // assets:true,    

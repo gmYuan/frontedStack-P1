@@ -1,6 +1,6 @@
 {
-  "name": "gmb-base-cli",
-  "version": "0.0.2",
+  "name": "gmb-base-cli-inquirer",
+  "version": "0.0.1",
   "description": "",
   "main": "index.js",
   "bin": {
@@ -16,6 +16,7 @@
   "dependencies": {
     "chalk": "^5.4.1",
     "commander": "^13.1.0",
+    "inquirer": "^12.6.0",
     "ora": "^8.2.0",
     "yargs": "^17.7.2"
   }

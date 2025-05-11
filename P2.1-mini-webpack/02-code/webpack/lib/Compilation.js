@@ -9,6 +9,21 @@ const parser = new Parser();
 
 const Chunk = require("./Chunk");
 
+const ejs = require("ejs");
+const fs = require("fs");
+const mainTemplate = fs.readFileSync(
+  // path.join(__dirname, "templates", "deferMain.ejs"),
+  path.join(__dirname, "templates", "main.ejs"),
+  "utf8"
+);
+const mainRender = ejs.compile(mainTemplate);
+
+const chunkTemplate = fs.readFileSync(
+  path.join(__dirname, "templates", "chunk.ejs"),
+  "utf8"
+);
+const chunkRender = ejs.compile(chunkTemplate);
+
 class Compilation extends Tapable {
   constructor(compiler) {
     super();
@@ -27,8 +42,16 @@ class Compilation extends Tapable {
     //这里放着所有代码块
     this.chunks = [];
 
-    // 模块的依赖图
-    // this.moduleGraph = new ModuleGraph(this);
+    // 这里放着本次编译所有的产出的文件名
+    this.files = [];
+
+    // 存放着生成资源 key是文件名 值是文件的内容
+    this.assets = {};
+
+    // 放着所有的第三方模块 isarray
+    this.vendors = [];
+    // 这里放着同时被多个代码块加载的模块  title.js
+    this.commons = [];
 
     this.hooks = {
       //当你成功构建完成一个模块后，就会触发此钩子执行
@@ -173,54 +196,45 @@ class Compilation extends Tapable {
     // console.log(this.chunks);
 
     this.hooks.afterChunks.call(this.chunks);
+    //生成代码块之后,要生成代码块对应资源
+    this.createChunkAssets();
     callback();
+  }
 
+  createChunkAssets() {
+    for (let i = 0; i < this.chunks.length; i++) {
+      const chunk = this.chunks[i];
+      //只是拿到了文件名
+      const file = chunk.name + ".js";
+      chunk.files.push(file);
+      let source;
 
-    //循环所有的modules数组
-    // for (const module of this.modules) {
-    //   //如果模块ID中有node_modules内容,说明是一个第三方模块
-    //   if (/node_modules/.test(module.moduleId)) {
-    //     module.name = "vendors";
-    //     if (!this.vendors.find((item) => item.moduleId === module.moduleId))
-    //       this.vendors.push(module);
-    //   } else {
-    //     let count = this.moduleCount[module.moduleId];
-    //     if (count) {
-    //       this.moduleCount[module.moduleId].count++;
-    //     } else {
-    //       //如果没有,则给它赋初始值 {module,count} count是模块的引用次数
-    //       this.moduleCount[module.moduleId] = { module, count: 1 };
-    //     }
-    //   }
-    // }
-    // for (let moduleId in this.moduleCount) {
-    //   const { module, count } = this.moduleCount[moduleId];
-    //   if (count >= 2) {
-    //     module.name = "commons";
-    //     this.commons.push(module);
-    //   }
-    // }
-    // let deferredModuleIds = [...this.vendors, ...this.commons].map(
-    //   (module) => module.moduleId
-    // );
-    // this.modules = this.modules.filter(
-    //   (module) => !deferredModuleIds.includes(module.moduleId)
-    // );
+      if (chunk.async) {
+        source = chunkRender({
+          chunkName: chunk.name, // ./src/index.js
+          modules: chunk.modules, //此代码块对应的模块数组[{moduleId:'./src/index.js'},{moduleId:'./src/title.js'}]
+        });
+      } else {
+        let deferredChunks = [];
+        if (this.vendors.length > 0) deferredChunks.push("vendors");
+        if (this.commons.length > 0) deferredChunks.push("commons");
+        source = mainRender({
+          // 入口模块的ID
+          entryModuleId: chunk.entryModule.moduleId,
+          // 延迟加载的代码块 
+          deferredChunks,
+          // 此代码块对应的模块数组[{moduleId:'./src/index.js'},{moduleId:'./src/title.js'}]
+          modules: chunk.modules,
+        });
+      }
 
-    // if (this.vendors.length > 0) {
-    //   const chunk = new Chunk(this.vendors[0]); //根据入口模块得到一个代码块
-    //   chunk.async = true;
-    //   this.chunks.push(chunk);
-    //   //对所有模块进行过滤,找出来那些名称跟这个chunk一样的模块,组成一个数组赋给chunk.modules
-    //   chunk.modules = this.vendors;
-    // }
-    // if (this.commons.length > 0) {
-    //   const chunk = new Chunk(this.commons[0]); //根据入口模块得到一个代码块
-    //   chunk.async = true;
-    //   this.chunks.push(chunk);
-    //   //对所有模块进行过滤,找出来那些名称跟这个chunk一样的模块,组成一个数组赋给chunk.modules
-    //   chunk.modules = this.commons;
-    // }
+      this.emitAssets(file, source);
+    }
+  }
+
+  emitAssets(file, source) {
+    this.assets[file] = source;
+    this.files.push(file);
   }
 }
 
