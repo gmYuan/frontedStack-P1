@@ -10,7 +10,7 @@ class Chunk {
     this.modules = [];
 
     //是否是异步代码块
-    // this.async = entryModule.async;
+    this.async = entryModule.async;
   }
 }
 module.exports = Chunk;

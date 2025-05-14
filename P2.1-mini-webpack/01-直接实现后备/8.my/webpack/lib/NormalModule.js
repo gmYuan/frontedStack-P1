@@ -32,6 +32,7 @@ class NormalModule{
    */
   build(compilation,callback){
     this.doBuild(compilation,err=>{
+      
         //得到语法树
         this._ast = this.parser.parse(this._source);
         //遍历语法树,找到里面的依赖进行收集依赖

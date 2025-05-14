@@ -1,0 +1,1 @@
+module.exports = '我是sum内容';

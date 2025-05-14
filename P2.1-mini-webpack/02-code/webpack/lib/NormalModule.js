@@ -6,7 +6,15 @@ const async = require("neo-async");
 // const { runLoaders } = require("./loader-runner");
 
 class NormalModule {
-  constructor({ name, context, rawRequest, resource, parser, moduleId }) {
+  constructor({
+    name,
+    context,
+    rawRequest,
+    resource,
+    parser,
+    moduleId,
+    async,
+  }) {
     // 这里的name，一开始是webpack.config.js 的 entry 的 key 值: main
     this.name = name;
     this.context = context;
@@ -27,6 +35,11 @@ class NormalModule {
 
     // 模块的ID
     this.moduleId = moduleId || "./" + path.posix.relative(context, resource);
+
+    // 当前模块依赖哪些异步模块 import(那些模块)
+    this.blocks = [];
+    // 表示当前的模块是属于一个异步代码块, 还是一个同步代码块
+    this.async = async;
   }
 
   /**
@@ -97,6 +110,52 @@ class NormalModule {
               resource: depResource, //依赖模块的 绝对路径
             });
             // console.log("this.dependencies---", this.dependencies);
+          } else if (types.isImport(node.callee)) {
+            // 支持动态导入/ import懒加载
+            // 判断这个节点CallExpression 它的callee是不是import类型
+
+            // 1. 获取模块的名称
+            let moduleName = node.arguments[0].value;
+
+            // 2. 获取可能的扩展名
+            let extName =
+              moduleName.split(path.posix.sep).pop().indexOf(".") == -1
+                ? ".js"
+                : "";
+            // 3. 获取依赖的模块的绝对路径
+            let depResource = path.posix.join(
+              path.posix.dirname(this.resource),
+              moduleName + extName
+            );
+            // 4. 获取依赖的模块ID ./+从根目录出发到依赖模块的绝对路径的相对路径 ./src/title.js
+            let depModuleId =
+              "./" + path.posix.relative(this.context, depResource);
+
+            // 5. 获取异步代码块的 chunkName名称
+            let chunkName = "0";
+            if (
+              Array.isArray(node.arguments[0].leadingComments) &&
+              node.arguments[0].leadingComments.length > 0
+            ) {
+              // webpackChunkName: 'title'
+              let leadingComments = node.arguments[0].leadingComments[0].value;
+              let regexp = /webpackChunkName:\s*['"]([^'"]+)['"]/;
+              chunkName = leadingComments.match(regexp)[1];
+            }
+
+            // 6. 用__webpack_require__.e 和 __webpack_require__.t
+            // 替换 动态导入的语句
+            nodePath.replaceWithSourceString(
+              `__webpack_require__.e("${chunkName}").then(__webpack_require__.t.bind(null,"${depModuleId}", 7))`
+            );
+
+            // 7. 存入 异步代码块的依赖
+            this.blocks.push({
+              context: this.context,
+              entry: depModuleId,
+              name: chunkName,
+              async: true, // 异步的代码块
+            });
           }
         },
       });
@@ -104,7 +163,17 @@ class NormalModule {
       //把转换后的语法树 重新生成源代码
       let { code } = generate(this._ast);
       this._source = code;
-      callback();
+      // callback();
+
+      //循环构建每一个异步代码块, 都构建完成 才会代表当前的模块编译完成
+      async.forEach(
+        this.blocks,
+        (block, done) => {
+          let { context, entry, name, async } = block;
+          compilation._addModuleChain(context, entry, name, async, done);
+        },
+        callback
+      );
     });
   }
 
@@ -115,6 +184,9 @@ class NormalModule {
    */
   doBuild(compilation, callback) {
     this.getSource(compilation, (err, source) => {
+      if (err) {
+        console.log('err是------', err)
+      }
       this._source = source;
       callback();
     });

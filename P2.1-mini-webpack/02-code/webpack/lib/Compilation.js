@@ -11,19 +11,30 @@ const Chunk = require("./Chunk");
 
 const ejs = require("ejs");
 const fs = require("fs");
-const mainTemplate = fs.readFileSync(
-  // path.join(__dirname, "templates", "deferMain.ejs"),
-  path.join(__dirname, "templates", "main.ejs"),
+// 创建 main.ejs
+// const mainTemplate = fs.readFileSync(
+//   // path.join(__dirname, "templates", "deferMain.ejs"),
+//   path.join(__dirname, "templates", "main.ejs"),
+//   "utf8"
+// );
+// const mainRender = ejs.compile(mainTemplate);
+
+// 创建支持异步导入的 asyncMain.ejs
+const asyncMainTemplate = fs.readFileSync(
+  path.join(__dirname, "templates", "asyncMain.ejs"),
   "utf8"
 );
-const mainRender = ejs.compile(mainTemplate);
+const mainRender = ejs.compile(asyncMainTemplate);
 
+// 创建 chunk.ejs
 const chunkTemplate = fs.readFileSync(
   path.join(__dirname, "templates", "chunk.ejs"),
   "utf8"
 );
 const chunkRender = ejs.compile(chunkTemplate);
 
+
+// Compilation类
 class Compilation extends Tapable {
   constructor(compiler) {
     super();
@@ -70,13 +81,13 @@ class Compilation extends Tapable {
    * @param {*} callback 所有模块都被编译完成 的回调
    */
   addEntry(context, entry, name, finalCallback) {
-    this._addModuleChain(context, entry, name, (err, module) => {
+    this._addModuleChain(context, entry, name, false, (err, module) => {
       // console.log('addEntry完成');
       finalCallback(err, module);
     });
   }
 
-  _addModuleChain(context, rawRequest, name, callback) {
+  _addModuleChain(context, rawRequest, name, async, callback) {
     this.createModule(
       {
         name,
@@ -87,7 +98,7 @@ class Compilation extends Tapable {
         moduleId:
           "./" +
           path.posix.relative(context, path.posix.join(context, rawRequest)),
-        // async,
+        async,
       },
       (entryModule) => this.entries.push(entryModule),
       callback
@@ -182,6 +193,8 @@ class Compilation extends Tapable {
     // 开始准备生成代码块
     this.hooks.beforeChunks.call();
 
+    debugger;
+
     // 一般来说,默认情况下,每一个入口会生成一个代码块
     for (const entryModule of this.entries) {
       //根据入口模块, 得到一个代码块
@@ -208,20 +221,21 @@ class Compilation extends Tapable {
       const file = chunk.name + ".js";
       chunk.files.push(file);
       let source;
-
+      // 异步代码块
       if (chunk.async) {
         source = chunkRender({
           chunkName: chunk.name, // ./src/index.js
           modules: chunk.modules, //此代码块对应的模块数组[{moduleId:'./src/index.js'},{moduleId:'./src/title.js'}]
         });
       } else {
+        // 同步代码块
         let deferredChunks = [];
         if (this.vendors.length > 0) deferredChunks.push("vendors");
         if (this.commons.length > 0) deferredChunks.push("commons");
         source = mainRender({
           // 入口模块的ID
           entryModuleId: chunk.entryModule.moduleId,
-          // 延迟加载的代码块 
+          // 延迟加载的代码块
           deferredChunks,
           // 此代码块对应的模块数组[{moduleId:'./src/index.js'},{moduleId:'./src/title.js'}]
           modules: chunk.modules,
