@@ -86,12 +86,19 @@ class NormalModule {
                 path.posix.dirname(this.resource),
                 moduleName + extName
               );
+            } else {
+              //否则是一个第三方模块,也就是放在node_modules里的
+              //C:\xxx....\node_modules\isarray\index.js
+              depResource = require.resolve(
+                path.posix.join(this.context, "node_modules", moduleName)
+              );
+              depResource = depResource.replace(/\\/g, "/"); //把window里的 \转成 /
             }
 
             // 4.依赖的模块ID  ./ + 从根目录出发到依赖模块的绝对路径 的相对路径
             //let depModuleId = './' + path.posix.relative(this.context,depResource);
             // depResource= /project/node_modules/isarray/index.js
-            // this.context /project/
+            // this.context /project/  
             // ./node_modules/isarray/index.js
             let depModuleId = "." + depResource.slice(this.context.length);
             // console.log("depModuleId---", depModuleId);
@@ -185,7 +192,7 @@ class NormalModule {
   doBuild(compilation, callback) {
     this.getSource(compilation, (err, source) => {
       if (err) {
-        console.log('err是------', err)
+        console.log("err是------", err);
       }
       this._source = source;
       callback();

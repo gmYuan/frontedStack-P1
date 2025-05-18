@@ -193,7 +193,7 @@ class Compilation extends Tapable {
     // 开始准备生成代码块
     this.hooks.beforeChunks.call();
 
-    debugger;
+    // debugger;
 
     // 一般来说,默认情况下,每一个入口会生成一个代码块
     for (const entryModule of this.entries) {
