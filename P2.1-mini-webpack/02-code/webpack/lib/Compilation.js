@@ -11,6 +11,7 @@ const Chunk = require("./Chunk");
 
 const ejs = require("ejs");
 const fs = require("fs");
+
 // 创建 main.ejs
 // const mainTemplate = fs.readFileSync(
 //   // path.join(__dirname, "templates", "deferMain.ejs"),
@@ -19,12 +20,21 @@ const fs = require("fs");
 // );
 // const mainRender = ejs.compile(mainTemplate);
 
+// ------------------------------------------------------------
 // 创建支持异步导入的 asyncMain.ejs
-const asyncMainTemplate = fs.readFileSync(
-  path.join(__dirname, "templates", "asyncMain.ejs"),
+// const asyncMainTemplate = fs.readFileSync(
+//   path.join(__dirname, "templates", "asyncMain.ejs"),
+//   "utf8"
+// );
+// const mainRender = ejs.compile(asyncMainTemplate);
+
+// ------------------------------------------------------------
+// 创建支持延迟加载的 deferMain.ejs
+const mainTemplate = fs.readFileSync(
+  path.join(__dirname, "templates", "deferMain.ejs"),
   "utf8"
 );
-const mainRender = ejs.compile(asyncMainTemplate);
+const mainRender = ejs.compile(mainTemplate);
 
 // 创建 chunk.ejs
 const chunkTemplate = fs.readFileSync(
@@ -32,7 +42,6 @@ const chunkTemplate = fs.readFileSync(
   "utf8"
 );
 const chunkRender = ejs.compile(chunkTemplate);
-
 
 // Compilation类
 class Compilation extends Tapable {
@@ -63,6 +72,9 @@ class Compilation extends Tapable {
     this.vendors = [];
     // 这里放着同时被多个代码块加载的模块  title.js
     this.commons = [];
+
+    // 可以记录每个模块被代码块引用的次数,如果大于等于2,就分离出到commons里
+    this.moduleCount = {};
 
     this.hooks = {
       //当你成功构建完成一个模块后，就会触发此钩子执行
@@ -194,16 +206,32 @@ class Compilation extends Tapable {
     this.hooks.beforeChunks.call();
 
     // debugger;
-
     // 一般来说,默认情况下,每一个入口会生成一个代码块
-    for (const entryModule of this.entries) {
-      //根据入口模块, 得到一个代码块
-      const chunk = new Chunk(entryModule);
-      this.chunks.push(chunk);
-      //对所有模块进行过滤,找出来那些名称跟这个chunk一样的模块,组成一个数组 赋给chunk.modules
-      chunk.modules = this.modules.filter(
-        (module) => module.name === chunk.name
-      );
+    // for (const entryModule of this.entries) {
+    //   //根据入口模块, 得到一个代码块
+    //   const chunk = new Chunk(entryModule);
+    //   this.chunks.push(chunk);
+    //   //对所有模块进行过滤,找出来那些名称跟这个chunk一样的模块,组成一个数组 赋给chunk.modules
+    //   chunk.modules = this.modules.filter(
+    //     (module) => module.name === chunk.name
+    //   );
+    // }
+
+    //循环所有的modules数组
+    for (const module of this.modules) {
+      //如果模块ID中有node_modules内容,说明是一个第三方模块
+      if (/node_modules/.test(module.moduleId)) {
+        module.name = "vendors";
+        this.vendors.push(module);
+      } else {
+        let count = this.moduleCount[module.moduleId];
+        if (count) {
+          this.moduleCount[module.moduleId].count++;
+        } else {
+          //如果没有,则给它赋初始值 {module,count} count是模块的引用次数
+          this.moduleCount[module.moduleId] = { module, count: 1 };
+        }
+      }
     }
 
     // console.log(this.chunks);

@@ -12,6 +12,7 @@ class EntryOptionPlugin {
       if (typeof entry === "string") {
         itemToPlugin(context, entry, "main").apply(compiler);
       } else {
+        // 支持多入口
         for (let entryName in entry) {
           itemToPlugin(context, entry[entryName], entryName).apply(compiler);
         }
